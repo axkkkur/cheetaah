@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0c0f14" />
+<title>CHEETAAH</title>
+<style>
+  :root {
+    --bg: #0c0f14;
+    --panel: #151a22;
+    --text: #e8edf5;
+    --muted: #8b97a8;
+    --accent: #3ecf8e;
+    --warn: #f0b429;
+    --danger: #ef5f67;
+    --line: #243041;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    min-height: 100%;
+  }
+  body {
+    padding: calc(16px + var(--safe-top)) 16px calc(24px + var(--safe-bottom));
+    max-width: 520px; margin: 0 auto;
+  }
+  h1 { font-size: 1.6rem; letter-spacing: 0.08em; margin: 0 0 12px; }
+  h2 { font-size: 1.15rem; margin: 0 0 8px; }
+  p, .muted { color: var(--muted); }
+  input, button, textarea {
+    font: inherit; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text);
+  }
+  input {
+    width: 100%; padding: 14px 16px; margin-bottom: 12px;
+  }
+  button {
+    padding: 14px 18px; min-height: 48px; cursor: pointer;
+    background: var(--accent); color: #062416; font-weight: 700; border: none;
+  }
+  button.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+  button.danger { background: var(--danger); color: #fff; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    display: inline-block; padding: 4px 10px; border-radius: 999px;
+    background: #1e2733; color: var(--muted); font-size: 0.75rem;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .pill.ok { color: var(--accent); }
+  .pill.warn { color: var(--warn); }
+  .pill.bad { color: var(--danger); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px; margin: 10px 0;
+  }
+  .quote {
+    border-left: 3px solid var(--accent); padding: 8px 12px; margin: 8px 0;
+    color: #c9d4e3; font-style: italic; white-space: pre-wrap;
+  }
+  .reversal {
+    background: #2a2210; border: 1px solid #6a5418; border-radius: 10px;
+    padding: 10px; margin-top: 8px;
+  }
+  .hidden { display: none !important; }
+  .back { background: transparent; color: var(--muted); border: none; padding: 8px 0; min-height: 40px; }
+  pre.diff {
+    white-space: pre-wrap; word-break: break-word; font-size: 0.75rem;
+    background: #0a0d12; padding: 10px; border-radius: 8px; max-height: 40vh; overflow: auto;
+  }
+  #recordBtn.recording { background: var(--danger); color: #fff; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: 0.7; } }
+  .token-gate {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+    display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20;
+  }
+  .token-box { width: 100%; max-width: 400px; background: var(--panel); padding: 20px; border-radius: 16px; }
+</style>
+</head>
+<body>
+  <div id="tokenGate" class="token-gate hidden">
+    <div class="token-box">
+      <h2>Enter access token</h2>
+      <p class="muted">Stored on this device only.</p>
+      <input id="tokenInput" type="password" placeholder="CHEETAAH_TOKEN" autocomplete="off" />
+      <button id="tokenSave" style="width:100%">Continue</button>
+    </div>
+  </div>
+
+  <div id="home">
+    <h1>CHEETAAH</h1>
+    <p class="muted">Meeting → decisions → approved execution</p>
+    <input id="titleInput" type="text" placeholder="Meeting title" />
+    <button id="recordBtn" style="width:100%; margin-bottom:16px">Record</button>
+    <div id="recStatus" class="muted"></div>
+    <h2>Meetings</h2>
+    <div id="meetingList"></div>
+  </div>
+
+  <div id="meetingView" class="hidden">
+    <button class="back" id="backBtn">← Back</button>
+    <h1 id="mTitle"></h1>
+    <div id="mStatus"></div>
+    <section>
+      <h2>Summary</h2>
+      <p id="mSummary" class="muted"></p>
+    </section>
+    <section>
+      <h2>Decisions</h2>
+      <div id="mDecisions"></div>
+    </section>
+    <section>
+      <h2>Action items</h2>
+      <div id="mItems"></div>
+    </section>
+    <section>
+      <h2>Transcript</h2>
+      <pre id="mTranscript" class="diff"></pre>
+    </section>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+  "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+}[c]));
+
+let token = localStorage.getItem("cheetaah_token") || "";
+let viewMeetingId = null;
+let homeTimer = null;
+let meetingTimer = null;
+let mediaRecorder = null;
+let chunks = [];
+
+function headers(extra = {}) {
+  return { "X-Token": token, ...extra };
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { ...headers(opts.headers || {}) } });
+  if (res.status === 401) {
+    localStorage.removeItem("cheetaah_token");
+    token = "";
+    showTokenGate();
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(t || res.statusText);
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return res.json();
+  return res.text();
+}
+
+function showTokenGate() {
+  $("tokenGate").classList.remove("hidden");
+}
+function hideTokenGate() {
+  $("tokenGate").classList.add("hidden");
+}
+
+$("tokenSave").onclick = () => {
+  token = $("tokenInput").value.trim();
+  if (!token) return;
+  localStorage.setItem("cheetaah_token", token);
+  hideTokenGate();
+  loadHome();
+};
+
+function statusPill(status) {
+  const s = String(status || "");
+  let cls = "";
+  if (["awaiting_approval","done","approved"].includes(s)) cls = "ok";
+  else if (["failed","rejected"].includes(s)) cls = "bad";
+  else if (["transcribing","extracting","checking_memory","executing","uploaded"].includes(s)) cls = "warn";
+  return `<span class="pill ${cls}">${esc(s)}</span>`;
+}
+
+async function loadHome() {
+  $("home").classList.remove("hidden");
+  $("meetingView").classList.add("hidden");
+  viewMeetingId = null;
+  clearInterval(meetingTimer);
+  try {
+    const meetings = await api("/api/meetings");
+    $("meetingList").innerHTML = meetings.map(m => `
+      <div class="card" data-id="${m.id}" style="cursor:pointer">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+          <strong>${esc(m.title || "Untitled")}</strong>
+          ${statusPill(m.status)}
+        </div>
+        <div class="muted" style="font-size:0.8rem;margin-top:6px">${esc(m.created_at || "")}</div>
+      </div>
+    `).join("") || `<p class="muted">No meetings yet.</p>`;
+    $("meetingList").querySelectorAll("[data-id]").forEach(el => {
+      el.onclick = () => openMeeting(Number(el.dataset.id));
+    });
+  } catch (e) {
+    $("meetingList").innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
+  clearInterval(homeTimer);
+  homeTimer = setInterval(loadHome, 8000);
+}
+
+async function openMeeting(id) {
+  viewMeetingId = id;
+  $("home").classList.add("hidden");
+  $("meetingView").classList.remove("hidden");
+  clearInterval(homeTimer);
+  await refreshMeeting();
+  clearInterval(meetingTimer);
+  meetingTimer = setInterval(refreshMeeting, 4000);
+}
+
+$("backBtn").onclick = () => loadHome();
+
+async function refreshMeeting() {
+  if (!viewMeetingId) return;
+  try {
+    const m = await api(`/api/meetings/${viewMeetingId}`);
+    $("mTitle").textContent = m.title || "Untitled";
+    $("mStatus").innerHTML = statusPill(m.status) + (m.error ? ` <span class="muted">${esc(m.error)}</span>` : "");
+    $("mSummary").textContent = m.summary || "—";
+    $("mTranscript").textContent = m.transcript || "";
+
+    $("mDecisions").innerHTML = (m.decisions || []).map(d => {
+      const revs = (d.reversals || []).map(r => `
+        <div class="reversal">
+          <div><span class="pill warn">${esc(r.relation)}</span>
+            <span class="muted">${esc(r.prior_date || "")}</span></div>
+          <div style="margin-top:6px">${esc(r.prior_decision || "")}</div>
+          <div class="quote"><em>Then:</em> ${esc(r.prior_quote)}</div>
+          <div class="quote"><em>Now:</em> ${esc(r.new_quote)}</div>
+          <div class="muted">${esc(r.explanation || "")}</div>
+        </div>
+      `).join("");
+      return `
+        <div class="card">
+          <strong>${esc(d.topic)}</strong>
+          <div>${esc(d.decision)}</div>
+          <div class="quote">${esc(d.quote)}</div>
+          ${revs}
+        </div>`;
+    }).join("") || `<p class="muted">None yet.</p>`;
+
+    $("mItems").innerHTML = (m.action_items || []).map(it => {
+      const err = it.result && it.result.error ? `<div class="muted" style="color:var(--danger)">${esc(it.result.error)}</div>` : "";
+      const done = it.status === "done" ? `
+        <div class="muted">Branch: ${esc(it.branch || "")}</div>
+        <button class="secondary" data-diff="${it.id}">View diff</button>
+        <pre class="diff hidden" id="diff-${it.id}"></pre>` : "";
+      let actions = "";
+      if (it.kind === "task_only") {
+        actions = `<button class="secondary" data-reject="${it.id}">Dismiss</button>`;
+      } else if (it.status === "proposed") {
+        actions = `
+          <button data-approve="${it.id}">Approve &amp; run</button>
+          <button class="danger" data-reject="${it.id}">Reject</button>`;
+      }
+      return `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+            <strong>${esc(it.title)}</strong>
+            ${statusPill(it.status)}
+          </div>
+          <div style="margin:6px 0">
+            <span class="pill">${esc(it.kind)}</span>
+            ${it.owner ? `<span class="pill">${esc(it.owner)}</span>` : ""}
+          </div>
+          <div>${esc(it.instruction)}</div>
+          <div class="quote">${esc(it.quote)}</div>
+          ${err}
+          <div class="row" style="margin-top:10px">${actions}</div>
+          ${done}
+        </div>`;
+    }).join("") || `<p class="muted">None yet.</p>`;
+
+    $("mItems").querySelectorAll("[data-approve]").forEach(btn => {
+      btn.onclick = async () => {
+        const id = Number(btn.dataset.approve);
+        btn.disabled = true;
+        await api(`/api/items/${id}/approve`, { method: "POST" });
+        await api(`/api/items/${id}/execute`, { method: "POST" });
+        refreshMeeting();
+      };
+    });
+    $("mItems").querySelectorAll("[data-reject]").forEach(btn => {
+      btn.onclick = async () => {
+        await api(`/api/items/${Number(btn.dataset.reject)}/reject`, { method: "POST" });
+        refreshMeeting();
+      };
+    });
+    $("mItems").querySelectorAll("[data-diff]").forEach(btn => {
+      btn.onclick = async () => {
+        const id = Number(btn.dataset.diff);
+        const pre = $(`diff-${id}`);
+        if (!pre.classList.contains("hidden") && pre.textContent) {
+          pre.classList.add("hidden");
+          return;
+        }
+        const d = await api(`/api/items/${id}/diff`);
+        pre.textContent = d.diff || "(empty)";
+        pre.classList.remove("hidden");
+      };
+    });
+
+    const inProgress = ["uploaded","transcribing","extracting","checking_memory"].includes(m.status);
+    const busyItem = (m.action_items || []).some(i => ["approved","executing"].includes(i.status));
+    if (!(inProgress || busyItem)) {
+      // keep polling lightly; interval already set
+    }
+  } catch (e) {
+    $("mStatus").innerHTML = `<span class="muted">${esc(e.message)}</span>`;
+  }
+}
+
+async function startRecording() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  chunks = [];
+  const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+    : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "";
+  mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mediaRecorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    const type = mediaRecorder.mimeType || "audio/webm";
+    const ext = type.includes("mp4") ? "mp4" : "webm";
+    const blob = new Blob(chunks, { type });
+    const fd = new FormData();
+    fd.append("title", $("titleInput").value || "Untitled");
+    fd.append("audio", blob, `rec.${ext}`);
+    $("recStatus").textContent = "Uploading…";
+    try {
+      const r = await api("/api/meetings", { method: "POST", body: fd });
+      $("recStatus").textContent = `Uploaded #${r.id}`;
+      openMeeting(r.id);
+    } catch (e) {
+      $("recStatus").textContent = e.message;
+    }
+  };
+  mediaRecorder.start();
+  $("recordBtn").classList.add("recording");
+  $("recordBtn").textContent = "Stop";
+  $("recStatus").textContent = "Recording…";
+}
+
+$("recordBtn").onclick = async () => {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    mediaRecorder.stop();
+    $("recordBtn").classList.remove("recording");
+    $("recordBtn").textContent = "Record";
+    return;
+  }
+  try {
+    await startRecording();
+  } catch (e) {
+    $("recStatus").textContent = e.message || String(e);
+  }
+};
+
+if (!token) showTokenGate();
+else { hideTokenGate(); loadHome(); }
+</script>
+</body>
+</html>

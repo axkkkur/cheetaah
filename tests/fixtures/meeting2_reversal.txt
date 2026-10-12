@@ -1,0 +1,3 @@
+Speaker 1 [00:08]: Update from last time — SQLite nahi, ab hum Postgres use karenge for the MVP.
+Speaker 2 [00:20]: Yes, we are reversing the SQLite decision. Postgres from day one.
+Speaker 1 [00:35]: Also update the docs to mention Postgres instead of SQLite.

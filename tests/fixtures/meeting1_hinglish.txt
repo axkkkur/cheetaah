@@ -1,0 +1,5 @@
+Speaker 1 [00:12]: Okay team, aaj ka main decision yeh hai ki hum SQLite hi use karenge for the MVP database.
+Speaker 2 [00:28]: Haan, SQLite for MVP — confirmed. Postgres later.
+Speaker 1 [00:40]: Aur README mein setup steps update kar do. Owner Rahul, due Friday.
+Speaker 2 [00:55]: Theek hai, main README update kar dunga with install and run commands.
+Speaker 1 [01:10]: Pricing change nahi karenge this quarter. Keep current plan.
